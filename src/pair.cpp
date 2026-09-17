@@ -215,6 +215,28 @@ void Pair::setRight(bam1_t *b) {
     mRightCigar = BamUtil::getCigar(mRight);
 }
 
+void Pair::setConsensus(bam1_t* left, bam1_t* right, const string& canonicalUmi) {
+    if(mLeft)
+        bam_destroy1(mLeft);
+    if(mRight)
+        bam_destroy1(mRight);
+
+    mLeft = left;
+    mRight = right;
+    mUMI = canonicalUmi;
+    mLeftCigar = mLeft ? BamUtil::getCigar(mLeft) : "";
+    mRightCigar = mRight ? BamUtil::getCigar(mRight) : "";
+
+    if(canonicalUmi.empty())
+        return;
+
+    const char miTag[2] = {'M', 'I'};
+    if((mLeft && bam_aux_update_str(mLeft, miTag, -1, canonicalUmi.c_str()) < 0) ||
+       (mRight && bam_aux_update_str(mRight, miTag, -1, canonicalUmi.c_str()) < 0)) {
+        error_exit("Failed to write canonical UMI to consensus BAM record");
+    }
+}
+
 bool Pair::pairFound() {
     return mLeft != NULL && mRight != NULL;
 }
@@ -336,4 +358,3 @@ void Pair::dump() {
         BamUtil::dump(mRight);
     }
 }
-

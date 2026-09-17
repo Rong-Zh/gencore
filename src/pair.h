@@ -27,6 +27,7 @@ public:
 
     void setLeft(bam1_t *b);
     void setRight(bam1_t *b);
+    void setConsensus(bam1_t* left, bam1_t* right, const string& canonicalUmi);
     bool pairFound();
     MapType getMapType();
     string getUMI();

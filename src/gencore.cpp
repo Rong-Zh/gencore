@@ -428,7 +428,10 @@ void Gencore::finishConsensus(map<int, map<int, map<long, Cluster*>>>& clusters)
                         delete iterOfPairs->second;
                     }
                 } else {
-                    vector<Pair*> csPairs = iter3->second->clusterByUMI(mOptions->unproperReadsUmiDiffThreshold, mPreStats, mPostStats, iter3->first < 0);
+                    const int umiThreshold = &clusters == &mProperClusters
+                        ? mOptions->properReadsUmiDiffThreshold
+                        : mOptions->unproperReadsUmiDiffThreshold;
+                    vector<Pair*> csPairs = iter3->second->clusterByUMI(umiThreshold, mPreStats, mPostStats, iter3->first < 0);
                     for(size_t i=0; i<csPairs.size(); i++) {
                         //csPairs[i]->dump();
                         outputPair(csPairs[i]);

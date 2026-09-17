@@ -2,6 +2,7 @@
 #include "bamutil.h"
 #include "reference.h"
 #include "group.h"
+#include "umicluster.h"
 #include <memory.h>
 
 Cluster::Cluster(Options* opt){
@@ -53,8 +54,8 @@ int Cluster::umiDiff(const string& umi1, const string& umi2) {
 }
     
 vector<Pair*> Cluster::clusterByUMI(int umiDiffThreshold, Stats* preStats, Stats* postStats, bool crossContig) {
-	vector<Group*> groups;
-    map<string, int> umiCount;
+    vector<Group*> groups;
+    map<string, size_t> umiCount;
     bool hasUMI = false;
     map<string, Pair*>::iterator iterOfPairs;
     for(iterOfPairs = mPairs.begin(); iterOfPairs!=mPairs.end(); iterOfPairs++) {
@@ -63,41 +64,18 @@ vector<Pair*> Cluster::clusterByUMI(int umiDiffThreshold, Stats* preStats, Stats
             hasUMI = true;
         umiCount[umi]++;
     }
-	while(mPairs.size()>0) {
-        // get top UMI
-        string topUMI;
-        int topCount = 0;
-        map<string, int>::iterator iter;
-        for(iter = umiCount.begin(); iter!=umiCount.end(); iter++) {
-            if(iter->second > topCount) {
-                topCount = iter->second;
-                topUMI = iter->first;
-            }
-        }
-
-        Group* c = new Group(mOptions);
-        bool isPE = false;
-
-		// create the group by the top UMI
-        map<string, Pair*>::iterator piter;
-        for(piter = mPairs.begin(); piter!=mPairs.end();){
-    		Pair* p = piter->second;
-            string umi = p->getUMI();
-            if(umiDiff(umi, topUMI) <= umiDiffThreshold) {
-                c->addPair(p);
-                if(p->mLeft && p->mRight)
-                    isPE = true;
-                piter = mPairs.erase(piter);
-                umiCount[umi] = 0;
-            } else {
-                piter++;
-            }
-        }
-        //if(mPairs.size()>0 || groups.size()>0)
-        //    cerr << "UMI " << topUMI<< " " << topCount << "/" << c->mPairs.size() << endl;
-        groups.push_back(c);
-        umiCount[topUMI] = 0;
-	}
+    const auto families = groupUmis(umiCount, umiDiffThreshold);
+    map<string, Group*> destination;
+    for(const auto& family : families) {
+        Group* group = new Group(mOptions);
+        groups.push_back(group);
+        for(const auto& umi : family)
+            destination.emplace(umi, group);
+    }
+    for(const auto& [qname, pair] : mPairs)
+        destination.at(pair->getUMI())->addPair(pair);
+    // Ownership of the pairs has moved to the groups.
+    mPairs.clear();
 
     preStats->addCluster(groups.size()>1);
 

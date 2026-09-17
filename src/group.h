@@ -39,6 +39,7 @@ public:
     static bool test();
 
 private:
+    string canonicalUmi() const;
     static int umiDiff(const string& umi1, const string& umi2);
     static bool isDuplex(const string& umi1, const string& umi2);
     

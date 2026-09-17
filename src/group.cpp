@@ -37,6 +37,24 @@ bool Group::matches(Pair* p){
     return false;
 }
 
+string Group::canonicalUmi() const {
+    map<string, int> counts;
+    for(const auto& [qname, pair] : mPairs) {
+        (void)qname;
+        counts[pair->getUMI()]++;
+    }
+
+    string canonical;
+    int highestCount = 0;
+    for(const auto& [umi, count] : counts) {
+        if(count > highestCount) {
+            canonical = umi;
+            highestCount = count;
+        }
+    }
+    return canonical;
+}
+
 int Group::umiDiff(const string& umi1, const string& umi2) {
 
     int len1 = umi1.length();
@@ -103,6 +121,7 @@ Pair* Group::consensusMerge(bool crossContig) {
 
     Pair *p = new Pair(mOptions);
     p->mMergeReads = mPairs.size();
+    const string consensusUmi = canonicalUmi();
 
     // for cross-contig mapped reads, only left read is present
     // to keep the PE relationship, we use the smallest name in the shortest read names
@@ -121,13 +140,12 @@ Pair* Group::consensusMerge(bool crossContig) {
             BamUtil::copyQName(right, left);
         }
     }
+    p->setConsensus(left, right, consensusUmi);
     if(left) {
-        p->setLeft(left);
         p->mMergeLeftDiff = leftDiff;
     }
 
     if(right) {
-        p->setRight(right);
         p->mMergeRightDiff = rightDiff;
     }
     return p;

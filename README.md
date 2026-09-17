@@ -9,6 +9,7 @@ An efficient tool to remove sequencing duplications and eliminate sequencing err
 * [How it works](#how-it-works)
 * [Command examples](#command-examples)
 * [UMI format](#umi-format)
+* [UMI clustering](#umi-clustering)
 * [All options](#all-options)
 * [Read/cite gencore paper](#citation)
 
@@ -76,6 +77,9 @@ git clone https://github.com/OpenGene/gencore.git
 cd gencore
 make
 # The executable is written to bin/gencore.
+
+# Optional: run the GoogleTest regression suite (requires GoogleTest).
+make test
 
 # Install.
 sudo make install
@@ -189,10 +193,93 @@ Please note that only UMI-integrated paired-end data can be used to generate dup
 The UMI should in the tail of query names. It can have a prefix like `UMI`, followed by an underscore. If the UMI has a prefix, it should be specified by `--umi_prefix` or `-u`. If the UMI prefix is `umi` or `UMI`, it can be automatically detected. The UMI can also have two parts, which are connected by an underscore.   
 
 ## UMI examples
+
+The parser validates the complete suffix as `BASES` or `BASES_BASES`, where
+each part is nonempty and bases are uppercase `A/C/G/T/N`. It matches the
+configured prefix exactly in the final colon-delimited field, ignores FASTQ
+comments, and accepts a terminal `/1` or `/2`. Invalid payloads are not truncated
+into a shorter UMI. More than two parts and other separators are not supported.
+
+As in the original code, a string `MI` tag takes precedence over the read name.
+It may contain a prefixed UMI, a full name in the above format, or this fork's
+raw consensus UMI. An explicitly matching prefix takes precedence over raw-tag
+interpretation: `MI:Z:AT_CG` with `-u AT` means `CG`. Such base-only prefixes are
+ambiguous with raw dual UMIs; prefer `UMI`/`umi`. Arbitrary molecular identifiers
+in `MI` are not necessarily UMI sequences. Invalid string tags return an empty
+UMI; absent or non-string tags fall back to the read name. This is compatibility
+behavior, not general support for all SAM `MI` identifiers.
+
 * Read query name = `"NB551106:8:H5Y57BGX2:1:13304:3538:1404:UMI_GAGCATAC"`, prefix = `"UMI"`, umi = `"GAGCATAC"`
 * Read query name = `"NB551106:8:H5Y57BGX2:1:13304:3538:1404:umi_GAGC_ATAC"`, prefix = `"umi"`, umi = `"GAGC_ATAC"`
 * Read query name = `"NB551106:8:H5Y57BGX2:1:13304:3538:1404:GAGCATAC"`, prefix = `""`, umi = `"GAGCATAC"`
 * Read query name = `"NB551106:8:H5Y57BGX2:1:13304:3538:1404:GAGC_ATAC"`, prefix = `""`, umi = `"GAGC_ATAC"`
+
+# UMI clustering
+
+This version uses **directional UMI clustering**, replacing the previous greedy
+one-hop grouping. No new command-line option is required. The existing
+`--umi_diff_threshold` / `-d` controls the distance per edge (default: 1);
+`-d 0` only groups identical UMIs.
+
+Within each existing coordinate cluster, gencore counts original read pairs per
+exact UMI. Nodes are processed by decreasing count, with lexical UMI order for
+ties. An edge from A to B requires equal UMI lengths, matching `_` separator
+positions, Hamming distance <= `-d`, and `count(A) >= 2 * count(B) - 1`.
+Counts remain fixed throughout clustering. Starting from each unassigned node,
+gencore follows outgoing edges and assigns reachable, unassigned nodes to its
+family. A node belongs to only one family; a shared descendant goes to the first
+eligible root. Missing UMIs form their own group; `N` is a literal base, not a
+wildcard. Without UMIs, the existing coordinate-only consensus behavior remains.
+
+| UMIs in the same coordinate cluster (`-d 1`) | Result |
+| --- | --- |
+| `AAAA:1`, `AAAT:1` | One family (singleton merging is allowed) |
+| `AAAA:10`, `AAAT:8` | Two families, even if insert sequences match |
+| `AAAA:10`, `AAAT:3`, `AATT:2` | One family through A -> B -> C |
+| `AAAA:10`, `AAAT:1`, `AATT:8` | Two families; the weak bridge cannot join both roots |
+
+The threshold applies to each edge, not to every member's distance from the root.
+Chained merges can therefore include a UMI more than one base from the root.
+The representative UMI is the most abundant original UMI (lexical tie-break);
+both consensus mates use the same representative. Existing `MI` output stores
+this representative UMI, **not a globally unique molecule identifier**. Read
+names may retain an original UMI; consumers should use the consensus `MI` tag.
+
+The biological assumption is that error-derived UMIs are usually less abundant
+than their source UMI. This is the established
+[UMI-tools directional rule](https://umi-tools.readthedocs.io/en/stable/the_methods.html),
+not a calibrated posterior probability or a guarantee of common molecular origin.
+Identical insert sequences do not prove that two observations came from one
+original molecule. Singleton merges and UMI collisions remain ambiguous, and
+supporting-pair counts must not be interpreted as independent-molecule counts.
+
+UMI grouping does **not** compare insert edit distances or use unavailable UMI
+qualities. After grouping, gencore's existing base-quality/overlap scoring and
+reference fallback generate consensus; existing duplex matching follows. There
+is no new allele-conflict splitting step. Low-frequency variant applications
+should validate false merges and variant retention using controls, including a
+comparison with `-d 0`; no universal optimality or clinical validation is claimed.
+
+This changes UMI grouping only, not the upstream coordinate definition: ordinary
+same-contig pairs use chromosome, aligned left position and the endpoint derived
+from absolute TLEN. Cross-contig/large-gap pairs use the existing mate-coordinate
+encoding. This is not a new unclipped-5'-coordinate, read-group, or explicit strand
+partitioning implementation, and is not a byte-for-byte UMI-tools replacement.
+The same configured UMI threshold now applies to streaming flushes and end-of-file
+flushes (the latter previously incorrectly used zero for remaining proper clusters).
+Family counts and downstream consensus results can change from older versions.
+
+Build and regression checks:
+
+```sh
+make -j2
+make test
+./bin/gencore test
+```
+
+GoogleTest and Python 3 are required for `make test`. Tests cover the directional
+boundaries, singleton ties, chains, shared descendants, exact matching, UMI
+structure, consensus mate identity, and streaming/end-of-file consistency.
 
 # all options
 ```
@@ -208,7 +295,7 @@ options:
   -s, --supporting_reads         only output consensus reads/pairs that merged by >= <supporting_reads> reads/pairs. The valud should be 1~10, and the default value is 1. (int [=1])
   -a, --ratio_threshold          if the ratio of the major base in a cluster is less than <ratio_threshold>, it will be further compared to the reference. The valud should be 0.5~1.0, and the default value is 0.8 (double [=0.8])
   -c, --score_threshold          if the score of the major base in a cluster is less than <score_threshold>, it will be further compared to the reference. The valud should be 1~20, and the default value is 6 (int [=6])
-  -d, --umi_diff_threshold       if two reads with identical mapping position have UMI difference <= <umi_diff_threshold>, then they will be merged to generate a consensus read. Default value is 1. (int [=1])
+  -d, --umi_diff_threshold       maximum UMI distance per edge within a coordinate cluster; directional also requires count support. 0 means exact matching. Default 1. (int [=1])
   -D, --duplex_diff_threshold    if the forward consensus and reverse consensus sequences have <= <duplex_diff_threshold> mismatches, then they will be merged to generate a duplex consensus sequence, otherwise will be discarded. Default value is 2. (int [=2])
       --high_qual                the threshold for a quality score to be considered as high quality. Default 30 means Q30. (int [=30])
       --moderate_qual            the threshold for a quality score to be considered as moderate quality. Default 20 means Q20. (int [=20])

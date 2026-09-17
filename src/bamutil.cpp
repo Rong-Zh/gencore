@@ -3,6 +3,27 @@
 #include <vector>
 #include <memory.h>
 
+namespace {
+// Documented payload grammar: BASES or BASES_BASES, with nonempty parts.
+bool validUmiPayload(const string& value) {
+    bool hasBase = false;
+    bool hasSeparator = false;
+    for(char c : value) {
+        if(c == '_') {
+            if(!hasBase || hasSeparator)
+                return false;
+            hasSeparator = true;
+            hasBase = false;
+        } else {
+            if(c != 'A' && c != 'C' && c != 'G' && c != 'T' && c != 'N')
+                return false;
+            hasBase = true;
+        }
+    }
+    return hasBase;
+}
+}
+
 BamUtil::BamUtil(){
 }
 
@@ -32,83 +53,38 @@ string BamUtil::getUMI(const bam1_t *b, const string& prefix) {
         if(!str) {
             return getUMI(string(bam_get_qname(b)), prefix);
         }
-        string umistr = string(str);
+        const string umistr(str);
+        // Honor an explicit format before trying this repository's raw MI
+        // representation. A base-only custom prefix must not become UMI bases.
+        if(!prefix.empty() && umistr.compare(0, prefix.size() + 1, prefix + "_") == 0)
+            return getUMI(umistr, prefix);
+        if(validUmiPayload(umistr))
+            return umistr;
         return getUMI(umistr, prefix);
     }
 }
 
 string BamUtil::getUMI(string qname, const string& prefix) {
-    int len = qname.length();
-    int prefixLen = prefix.length();
-
-    // prefix mode
-    if(prefixLen > 0) {
-        string::size_type pos = qname.find_last_of(prefix);
-        if(pos == string::npos)
+    // FASTQ comments are not part of the query name or its UMI suffix.
+    const auto whitespace = qname.find_first_of(" \t\r\n");
+    if(whitespace != string::npos)
+        qname.resize(whitespace);
+    // Legacy paired FASTQ names may retain a terminal /1 or /2.
+    if(qname.size() >= 2 && qname[qname.size() - 2] == '/' &&
+       (qname.back() == '1' || qname.back() == '2'))
+        qname.resize(qname.size() - 2);
+    const auto separator = qname.rfind(':');
+    string payload = separator == string::npos ? qname : qname.substr(separator + 1);
+    if(!prefix.empty()) {
+        const string marker = prefix + "_";
+        if(payload.compare(0, marker.size(), marker) != 0)
             return "";
-        bool foundSep = false;
-        bool found= false;
-        int umiLen = 0;
-        int sep = 0;
-        int start = pos + 2;
-        for(sep = start; sep<len; sep++) {
-            char c = qname[sep];
-            if(c!='A' && c!='T' && c!='C' && c!='G' && c!='_') {
-                foundSep = true;
-                break;
-            } else 
-                umiLen++;
-        }
-        return qname.substr(start, umiLen);
-    }
-
-    bool foundSep = false;
-    bool found= false;
-    int sep = len-1;
-    for(sep = len-1; sep>=0; sep--) {
-        char c = qname[sep];
-        if(c == ':') {
-            foundSep = true;
-            break;
-        }
-    }
-
-    if(!foundSep || sep + prefixLen >=len-1) {
-        if(prefixLen == 0)
-            return "";
-    }
-
-
-    // check prefix
-    bool goodPrefix = true;
-    for(int p=0; p<prefixLen; p++) {
-        if(prefix[p] != qname[sep + 1 + p]) {
-            goodPrefix = false;
-            break;
-        }
-    }
-
-    if(!goodPrefix)
+        payload.erase(0, marker.size());
+    } else if(separator == string::npos) {
+        // Bare strings are only accepted through the BAM MI-tag path.
         return "";
-
-    int start = sep + 1 + prefixLen;
-    if(start < len-1 && qname[start] == '_')
-        start++;
-
-    int numOfUnderscore = 0;
-    for(int i=start; i<len; i++) {
-        char c = qname[i];
-        // UMI can be only A/T/C/G/N/_
-        if(c != 'A' && c != 'T' && c != 'C' && c != 'G' && c != '_') {
-            return "";
-        }
-        if(c == '_') {
-            numOfUnderscore++;
-            if(numOfUnderscore > 1)
-                return "";
-        }
     }
-    return qname.substr(start, len-start);
+    return validUmiPayload(payload) ? payload : "";
 }
 
 string BamUtil::getQual(const bam1_t *b) {
