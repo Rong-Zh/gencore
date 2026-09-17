@@ -2,8 +2,35 @@
 #include <limits>
 #include <stdexcept>
 #include "umicluster.h"
+#include <random>
+#include "reference/umi_cluster_quadratic.h"
 
 using Families = std::vector<std::vector<std::string>>;
+
+TEST(UmiClusterTest, IndexedSearchMatchesQuadraticReferenceExactly) {
+    std::mt19937 random(1729);
+    for(int trial = 0; trial < 60; ++trial) {
+        std::map<std::string, size_t> counts;
+        for(int i = 0; i < 400; ++i) {
+            std::string umi;
+            const int length = trial % 3 == 0 ? 5 : 14;
+            for(int j = 0; j < length; ++j)
+                umi += "ACGTN"[random() % 5];
+            if(trial % 2 == 0)
+                umi.insert(3, "_");
+            counts[umi] = trial % 4 == 0 ? 1 : 1 + random() % 20;
+            // Include real distance-one neighbors and competing parents.
+            umi[0] = umi[0] == 'A' ? 'T' : 'A';
+            counts[umi] = 1;
+        }
+        counts[""] = 3;
+        counts["A_C"] = 2;
+        counts["AC_"] = 1;
+        for(int distance : {0, 1, 2})
+            EXPECT_EQ(groupUmis(counts, distance), quadraticGroupUmis(counts, distance))
+                << "trial=" << trial << ", distance=" << distance;
+    }
+}
 
 TEST(UmiClusterTest, MergesSingletonsAndBreaksTiesLexically) {
     EXPECT_EQ(groupUmis({{"AAAT", 1}, {"AAAA", 1}}, 1), (Families{{"AAAA", "AAAT"}}));

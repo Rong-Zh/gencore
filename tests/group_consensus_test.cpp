@@ -88,6 +88,21 @@ TEST(GroupConsensusTest, UsesOneCanonicalUmiForBothConsensusMates) {
     EXPECT_EQ(BamUtil::getUMI(consensus->mRight, options.umiPrefix), umiA);
 }
 
+TEST(GroupConsensusTest, SupportingCountsDoNotWrapOrDuplicateExistingTags) {
+    Options options;
+    options.umiPrefix = "UMI";
+    std::unique_ptr<Pair> pair(makePair(&options, "counts", "AAAA", 10, 10));
+    ASSERT_NE(pair, nullptr);
+    ASSERT_EQ(bam_aux_update_int(pair->mLeft, "FR", 2), 0);
+    pair->mMergeReads = 70000;
+    pair->setDuplex(300);
+    pair->writeSscsDcsTag();
+    for(auto read : {pair->mLeft, pair->mRight}) {
+        EXPECT_EQ(bam_aux2i(bam_aux_get(read, "FR")), 70000);
+        EXPECT_EQ(bam_aux2i(bam_aux_get(read, "RR")), 300);
+    }
+}
+
 std::map<std::string, int> consensusFamilies(
     const std::map<std::string, int>& counts, bool reverseOrder = false,
     bool duplex = false) {

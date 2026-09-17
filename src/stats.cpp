@@ -6,8 +6,10 @@
 #include <math.h>
 
 
-Stats::Stats(Options* opt) {
-	memset(this, 0, sizeof(Stats));
+Stats::Stats(Options* opt)
+    : mReadWithMismatches(0), mCluster(0), mMultiMoleculeCluster(0),
+      mMolecule(0), mMoleculeSE(0), mMoleculePE(0), mBase(0),
+      mBaseMismatches(0), mBaseUnmapped(0), mRead(0), mReadUnmapped(0) {
 	mOptions = opt;
 	mSupportingHistgram = new long[MAX_SUPPORTING_READS];
 	memset(mSupportingHistgram, 0, sizeof(long)*MAX_SUPPORTING_READS);

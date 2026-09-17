@@ -54,14 +54,13 @@ void Pair::writeSscsDcsTag() {
 void Pair::writeSscsDcsTagBam(bam1_t* b) {
     const char cssTag[2] = {'F','R'}; // forward strand read count
     const char dcsTag[2] = {'R','R'}; // reverse strand read number
-    char type = 'C';
-    unsigned short val = min(mMergeReads, 65535);
-    int ret = bam_aux_append(b, cssTag, type, 1, (uint8_t*)&val);
+    // Let HTSlib select a sufficient integer width; a one-byte C tag wraps
+    // above 255 supporting pairs and append can leave duplicate old tags.
+    int ret = bam_aux_update_int(b, cssTag, mMergeReads);
     if(ret != 0)
         error_exit("Failed to write the consensus reads tag (CR) to BAM");
     if(mIsDuplex) {
-        unsigned short valReverse = min(mReverseMergeReads, 65535);
-        ret = bam_aux_append(b, dcsTag, type, 1, (uint8_t*)&valReverse);
+        ret = bam_aux_update_int(b, dcsTag, mReverseMergeReads);
         if(ret != 0)
             error_exit("Failed to write the duplex consensus reads tag (DR) to BAM");
     }

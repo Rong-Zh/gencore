@@ -153,6 +153,7 @@ Pair* Group::consensusMerge(bool crossContig) {
 
 bam1_t* Group::consensusMergeBam(bool isLeft, int& diff) {
     vector<Pair*> allPairs;
+    allPairs.reserve(mPairs.size());
     map<string, Pair*>::iterator iterOfPairs;
     for(iterOfPairs = mPairs.begin(); iterOfPairs!=mPairs.end(); iterOfPairs++) {
         allPairs.push_back(iterOfPairs->second);
@@ -304,6 +305,8 @@ bam1_t* Group::consensusMergeBam(bool isLeft, int& diff) {
 
     vector<bam1_t *> reads;
     vector<char *> scores;
+    reads.reserve(allPairs.size());
+    scores.reserve(allPairs.size());
 
     reads.push_back(out);
     scores.push_back(outScore);
@@ -353,6 +356,9 @@ int Group::makeConsensus(vector<bam1_t* >& reads, bam1_t* out, vector<char*>& sc
     vector<uint8_t *> alldata;
     vector<uint8_t *> allqual;
     vector<int> lenDiff;
+    alldata.reserve(reads.size());
+    allqual.reserve(reads.size());
+    lenDiff.reserve(reads.size());
     // if the sequences are right ones of pairs, we supposed they are aligned on the right (end)
     for(int r=0; r<reads.size(); r++) {
         alldata.push_back(bam_get_seq(reads[r]));

@@ -216,6 +216,9 @@ behavior, not general support for all SAM `MI` identifiers.
 
 # UMI clustering
 
+For performance changes, reproducible benchmarks and their limits, see
+[performance checks](benchmarks/README.md).
+
 This version uses **directional UMI clustering**, replacing the previous greedy
 one-hop grouping. No new command-line option is required. The existing
 `--umi_diff_threshold` / `-d` controls the distance per edge (default: 1);
