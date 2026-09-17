@@ -1,34 +1,40 @@
-DIR_INC = ./inc
 DIR_SRC = ./src
 DIR_OBJ = ./obj
+DIR_BIN = ./bin
+HTSLIB_DIR = ./deps/htslib
 BINDIR=/usr/local/bin
 
 SRC = $(wildcard ${DIR_SRC}/*.cpp)  
 OBJ = $(patsubst %.cpp,${DIR_OBJ}/%.o,$(notdir ${SRC})) 
+DEP = $(OBJ:.o=.d)
 
 TARGET = gencore
 
-BIN_TARGET = ${TARGET}
+BIN_TARGET = ${DIR_BIN}/${TARGET}
 
-CC = g++
-CFLAGS = -std=c++11 -g -I${DIR_INC}
+CXX = g++
+CPPFLAGS = -I${HTSLIB_DIR}/include
+CXXFLAGS = -std=c++20 -O3 -g -MMD -MP
+HTSLIB_LIB = ${HTSLIB_DIR}/lib/libhts.a
+LDLIBS = ${HTSLIB_LIB} -ldeflate -llzma -lbz2 -lz -lm -lpthread
 
-${BIN_TARGET}:${OBJ}
-	$(CC) $(OBJ) -L. -lhts -lz -lpthread -o $@
+${BIN_TARGET}:${OBJ} | make_bin_dir
+	$(CXX) $(LDFLAGS) $(OBJ) $(LDLIBS) -o $@
     
-${DIR_OBJ}/%.o:${DIR_SRC}/%.cpp make_obj_dir
-	$(CC) $(CFLAGS) -O3 -c $< -o $@
-.PHONY:clean
+${DIR_OBJ}/%.o:${DIR_SRC}/%.cpp | make_obj_dir
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
+.PHONY: clean make_obj_dir make_bin_dir install
 clean:
-	rm obj/*.o
-	rm $(TARGET)
+	rm -f $(OBJ) $(DEP) $(BIN_TARGET) $(TARGET)
 
 make_obj_dir:
-	@if test ! -d $(DIR_OBJ) ; \
-	then \
-		mkdir $(DIR_OBJ) ; \
-	fi
+	mkdir -p $(DIR_OBJ)
 
-install:
-	install $(TARGET) $(BINDIR)/$(TARGET)
+make_bin_dir:
+	mkdir -p $(DIR_BIN)
+
+install: $(BIN_TARGET)
+	install $(BIN_TARGET) $(BINDIR)/$(TARGET)
 	@echo "Installed."
+
+-include $(DEP)

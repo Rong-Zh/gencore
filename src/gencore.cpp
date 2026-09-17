@@ -2,20 +2,19 @@
 #include "bamutil.h"
 #include "jsonreporter.h"
 #include "htmlreporter.h"
-#include <limits.h>
 
 Gencore::Gencore(Options *opt){
     mOptions = opt;
     mBamHeader = NULL;
     mOutSam = NULL;
+    mThreadPool = NULL;
     mPreStats = new Stats(opt);
     mPreStats->setPostStats(false);
     mPostStats = new Stats(opt);
     mPostStats->setPostStats(true);
     mOutSetCleared = false;
-    mProcessedTid = -1;
-    mProcessedPos = -1;
     mProperClustersFinished = false;
+    mClusterTick = 0;
 }
 
 Gencore::~Gencore(){
@@ -31,6 +30,11 @@ Gencore::~Gencore(){
             cerr << "ERROR: failed to close " << mOutput << endl;
             exit(-1);
         }
+        mOutSam = NULL;
+    }
+    if(mThreadPool != NULL) {
+        hts_tpool_destroy(mThreadPool);
+        mThreadPool = NULL;
     }
     delete mPreStats;
     delete mPostStats;
@@ -80,65 +84,79 @@ void Gencore::outputOutSet() {
     mOutSetCleared = true;
 }
 
-void Gencore::writeBam(bam1_t* b) {
-    static int lastTid = -1;
-    static int lastPos = -1;
-    static bool warnedUnordered = false;
-    //BamUtil::dump(b);
-    if(b->core.tid <lastTid || (b->core.tid == lastTid && b->core.pos <lastPos)) {
-        // skip the -1:-1, which means unmapped
-        if(b->core.tid >=0 && b->core.pos >= 0) {
-            if(!warnedUnordered) {
-                cerr << "WARNING: The output will be unordered!" << endl;
-                warnedUnordered = true;
-            }
-            /*cerr << "ERROR: the input is unsorted. Found " << b->core.tid << ":" << b->core.pos << " after " << lastTid << ":" << lastPos << endl;
-            cerr << "Please sort the input first." << endl << endl;
-            //BamUtil::dump(b);
-            cerr << "mProcessedTid: " << mProcessedTid << endl;
-            cerr << "mProcessedPos: " << mProcessedPos << endl;
-            //dumpClusters(mProperClusters);
-            exit(-1);*/
+void Gencore::flushOutputBefore(BamCoordinate watermark) {
+    while(!mOutSet.empty()) {
+        set<bam1_t*, bamComp>::iterator iter = mOutSet.begin();
+        bam1_t* b = *iter;
+        const BamCoordinate coordinate = BamCoordinate::from(b);
+
+        // Unmapped records sort after all mapped records.  They are retained
+        // until the final flush.
+        if(!coordinate.isMapped())
+            break;
+        if(coordinate >= watermark)
+            break;
+
+        writeBam(b);
+        bam_destroy1(b);
+        mOutSet.erase(iter);
+    }
+}
+
+void Gencore::flushReadyOutput(BamCoordinate inputCoordinate) {
+    if(!inputCoordinate.isMapped())
+        return;
+
+    // For coordinate-sorted input, an unread alignment cannot start before the
+    // current input coordinate.  A consensus record that can start earlier
+    // must belong to a cluster already in memory.  Therefore the exclusive
+    // output watermark is the earlier of the current input coordinate and the
+    // earliest active cluster coordinate.
+    BamCoordinate watermark = inputCoordinate;
+
+    if(!mProperClusters.empty()) {
+        map<int, map<int, map<long, Cluster*>>>::const_iterator tidIter = mProperClusters.begin();
+        if(!tidIter->second.empty()) {
+            const BamCoordinate clusterCoordinate{
+                tidIter->first,
+                tidIter->second.begin()->first
+            };
+            if(clusterCoordinate < watermark)
+                watermark = clusterCoordinate;
         }
+    }
+
+    flushOutputBefore(watermark);
+}
+
+void Gencore::writeBam(bam1_t* b) {
+    //BamUtil::dump(b);
+    const BamCoordinate coordinate = BamCoordinate::from(b);
+    if(mLastWrittenCoordinate && coordinate < *mLastWrittenCoordinate) {
+        cerr << "ERROR: internal output ordering failure. Found "
+             << coordinate.tid << ":" << coordinate.pos << " after "
+             << mLastWrittenCoordinate->tid << ":" << mLastWrittenCoordinate->pos << endl;
+        exit(-1);
     }
     if(sam_write1(mOutSam, mBamHeader, b) <0) {
         error_exit("Writing failed, exiting ...");
     }
-    lastTid = b->core.tid;
-    lastPos = b->core.pos;
+    mLastWrittenCoordinate = coordinate;
 
     mPostStats->addRead(b);
 }
 
-void Gencore::outputBam(bam1_t* b, bool isLeft) {
+void Gencore::bufferOutput(bam1_t* b) {
     pair<set<bam1_t*, bamComp>::iterator,bool> ret = mOutSet.insert(b);
     //cerr << "inserting " << (b)->core.tid << ":" << (b)->core.pos << endl;
     //cerr << "head " << (*mOutSet.begin())->core.tid << ":" << (*mOutSet.begin())->core.pos << endl;
     //cerr << "tail " << (*mOutSet.rbegin())->core.tid << ":" << (*mOutSet.rbegin())->core.pos << endl;
     // pointing to its next
     if(ret.second == false) {
-        cerr << "OOPS, found two completely same reads" << endl;
+        cerr << "ERROR: attempted to buffer the same BAM record twice" << endl;
         BamUtil::dump(b);
         BamUtil::dump(*ret.first);
-    }
-    set<bam1_t*, bamComp>::iterator insertpos = ret.first;
-    insertpos++;
-    // if it's left, clear the output set less than it
-    if(isLeft) {
-        //BamUtil::dump(b);
-        set<bam1_t*, bamComp>::iterator iter;
-        // write those bam less than coming left bam
-        for(iter = mOutSet.begin(); iter!=insertpos; iter++) {
-            // break since the reads in mProperClusters are smaller than this one
-            if(mProcessedPos == -1 || (*iter)->core.tid>mProcessedTid || ((*iter)->core.tid == mProcessedTid && (*iter)->core.pos >= mProcessedPos)) {
-                break;
-            }
-            writeBam(*iter);
-            // delete this bam
-            bam_destroy1(*iter);
-        }
-        // clear it
-        mOutSet.erase(mOutSet.begin(), iter);
+        error_exit("Internal output buffer ownership error");
     }
 }
 
@@ -149,11 +167,11 @@ void Gencore::outputPair(Pair* p) {
         return ;
 
     if(p->mLeft) {
-        outputBam(p->mLeft, true);
+        bufferOutput(p->mLeft);
         p->mLeft =  NULL;
     }
     if(p->mRight) {
-        outputBam(p->mRight, false);
+        bufferOutput(p->mRight);
         // right bam will be put in the mOutSet, so make it NULL to avoid being deleted
         p->mRight =  NULL;
     }
@@ -176,6 +194,19 @@ void Gencore::consensus(){
         exit(-1);
     }
 
+    mThreadPool = hts_tpool_init(mOptions->threads);
+    if(mThreadPool == NULL) {
+        error_exit("Failed to create HTSlib thread pool");
+    }
+    htsThreadPool ioThreadPool{
+        .pool = mThreadPool,
+        .qsize = mOptions->threads * 2
+    };
+    if(hts_set_thread_pool(in, &ioThreadPool) < 0 ||
+       hts_set_thread_pool(mOutSam, &ioThreadPool) < 0) {
+        error_exit("Failed to configure HTSlib thread pool");
+    }
+
     mBamHeader = sam_hdr_read(in);
     mOptions->bamHeader = mBamHeader;
     mPreStats->makeGenomeDepthBuf();
@@ -189,6 +220,14 @@ void Gencore::consensus(){
     }
     BamUtil::dumpHeader(mBamHeader);
 
+    // The input is verified as coordinate sorted while it is read, and the
+    // output path below preserves that order.  Keep the header consistent even
+    // when an otherwise valid input header omitted or misstated SO.
+    if(sam_hdr_update_hd(mBamHeader, "SO", "coordinate") < 0) {
+        cerr << "failed to update output sort order in header" << endl;
+        exit(-1);
+    }
+
     if (sam_hdr_write(mOutSam, mBamHeader) < 0) {
         cerr << "failed to write header" << endl;
         exit(-1);
@@ -198,10 +237,9 @@ void Gencore::consensus(){
     b = bam_init1();
     int r;
     int count = 0;
-    int lastTid = -1;
-    int lastPos = -1;
     bool hasPE = false;
     bool isFirst = true;
+    optional<BamCoordinate> lastInputCoordinate;
     while ((r = sam_read1(in, mBamHeader, b)) >= 0) {
         // for the first read, check UMI prefix automatically
         if(isFirst) {
@@ -229,30 +267,31 @@ void Gencore::consensus(){
             cerr << "WARNING: seems that the input data is single-end, gencore will not make consensus read and remove duplication for SE data since grouping by coordination will be inaccurate." << endl << endl;
         }
 
-        // check whether the BAM is sorted
-        if(b->core.tid <lastTid || (b->core.tid == lastTid && b->core.pos <lastPos)) {
-            // skip the -1:-1, which means unmapped
-            if(b->core.tid >=0 && b->core.pos >= 0) {
-                cerr << "ERROR: the input is unsorted. Found " << b->core.tid << ":" << b->core.pos << " after " << lastTid << ":" << lastPos << endl;
-                cerr << "Please sort the input first." << endl << endl;
-                BamUtil::dump(b);
-                exit(-1);
-            }
+        // Check coordinate order.  In a coordinate-sorted BAM, unmapped
+        // records form the final section, so a mapped record must never occur
+        // after one of them.
+        const BamCoordinate inputCoordinate = BamCoordinate::from(b);
+        const bool isUnmapped = !inputCoordinate.isMapped();
+        if(lastInputCoordinate && inputCoordinate < *lastInputCoordinate) {
+            cerr << "ERROR: the input is unsorted. Found "
+                 << inputCoordinate.tid << ":" << inputCoordinate.pos << " after "
+                 << lastInputCoordinate->tid << ":" << lastInputCoordinate->pos << endl;
+            cerr << "Please sort the input first." << endl << endl;
+            BamUtil::dump(b);
+            exit(-1);
         }
         // for testing, we only process to some contig
         if(mOptions->maxContig>0 && b->core.tid>=mOptions->maxContig){
-            b = bam_init1();
             break;
         }
         // if debug flag is enabled, show which contig we are start to process
-        if(mOptions->debug && b->core.tid > lastTid) {
+        if(mOptions->debug && inputCoordinate.isMapped() &&
+           (!lastInputCoordinate || inputCoordinate.tid > lastInputCoordinate->tid)) {
             cerr << "Starting contig " << b->core.tid << endl;
         }
-        lastTid = b->core.tid;
-        lastPos = b->core.pos;
-
+        lastInputCoordinate = inputCoordinate;
         // unmapped reads, we just write it and continue
-        if(b->core.tid < 0 || b->core.pos < 0 ) {
+        if(isUnmapped) {
             // we arrived the end of bam file with unmapped reads, go clear the output set first
             if(!mOutSetCleared) {
                 if(!mProperClustersFinished) {
@@ -267,16 +306,23 @@ void Gencore::consensus(){
 
         // for secondary alignments, we just skip it
         if(!BamUtil::isPrimary(b)) {
+            flushReadyOutput(inputCoordinate);
             continue;
         }
         addToCluster(b);
+        flushReadyOutput(inputCoordinate);
         b = bam_init1();
+    }
+
+    if(r < -1) {
+        error_exit("Failed while reading input BAM/SAM");
     }
 
     if(!mProperClustersFinished) {
         mProperClustersFinished = true;
         finishConsensus(mProperClusters);
     }
+    outputOutSet();
     
     //finishConsensus(mUnProperClusters);
 
@@ -305,7 +351,7 @@ void Gencore::addToProperCluster(bam1_t* b) {
     } else { // cross contig, we only process this read, but dont process its mate
         // no mate or mate is not mapped, we cannot remove duplication or make consensus read, so just write it
         if(b->core.mtid < 0) {
-            outputBam(b, true);
+            bufferOutput(b);
             return;
         } else { // cross contig pair mapping
             right = -1L * (long)mBamHeader->target_len[b->core.tid] * (long)(b->core.mtid+1) + (long)b->core.mpos;
@@ -316,9 +362,8 @@ void Gencore::addToProperCluster(bam1_t* b) {
     mProperClusters[tid][left][right]->addRead(b);
 
 
-    static int tick = 0;
-    tick++;
-    if(tick % 10000 != 0)
+    mClusterTick++;
+    if(mClusterTick % 10000 != 0)
         return;
 
     // make consensus merge
@@ -326,24 +371,12 @@ void Gencore::addToProperCluster(bam1_t* b) {
     map<int, map<long, Cluster*>>::iterator iter2;
     map<long, Cluster*>::iterator iter3;
     bool needBreak = false;
-    // to mark the smallest tid in the set
-    int curProcessedTid = INT_MAX;
-    int curProcessedPos = -1;
-    int processedPos;
     for(iter1 = mProperClusters.begin(); iter1 != mProperClusters.end();) {
         if(iter1->first > tid || needBreak) {
-            if(curProcessedTid > iter1->first) {
-                curProcessedTid = iter1->first;
-                curProcessedPos = processedPos;
-            }
             break;
         }
-        // to mark the smallest pos in this set
-        processedPos =mBamHeader->target_len[iter1->first];
         for(iter2 = iter1->second.begin(); iter2 != iter1->second.end(); ) {
             if(iter1->first == tid && iter2->first >= b->core.pos) {
-                if(processedPos > iter2->first)
-                    processedPos = iter2->first;
                 needBreak = true;
                 break;
             }
@@ -353,7 +386,7 @@ void Gencore::addToProperCluster(bam1_t* b) {
                     break;
                 }
                 vector<Pair*> csPairs = iter3->second->clusterByUMI(mOptions->properReadsUmiDiffThreshold, mPreStats, mPostStats, iter3->first < 0);
-                for(int i=0; i<csPairs.size(); i++) {
+                for(size_t i=0; i<csPairs.size(); i++) {
                     //csPairs[i]->dump();
                     outputPair(csPairs[i]);
                     delete csPairs[i];
@@ -366,26 +399,15 @@ void Gencore::addToProperCluster(bam1_t* b) {
             if(iter2->second.size() == 0) {
                 iter2 = iter1->second.erase(iter2);
             } else {
-                if(processedPos > iter2->first)
-                    processedPos = iter2->first;
                 iter2++;
             }
         }
         // this tid is done
         if(iter1->second.size() == 0) {
             iter1 = mProperClusters.erase(iter1);
-            curProcessedPos = processedPos;
         } else {
-            if(curProcessedTid > iter1->first) {
-                curProcessedTid = iter1->first;
-                curProcessedPos = processedPos;
-            }
             iter1++;
         }
-    }
-    if(curProcessedTid != INT_MAX) {
-        mProcessedTid = curProcessedTid;
-        mProcessedPos = curProcessedPos;
     }
 }
 
@@ -407,7 +429,7 @@ void Gencore::finishConsensus(map<int, map<int, map<long, Cluster*>>>& clusters)
                     }
                 } else {
                     vector<Pair*> csPairs = iter3->second->clusterByUMI(mOptions->unproperReadsUmiDiffThreshold, mPreStats, mPostStats, iter3->first < 0);
-                    for(int i=0; i<csPairs.size(); i++) {
+                    for(size_t i=0; i<csPairs.size(); i++) {
                         //csPairs[i]->dump();
                         outputPair(csPairs[i]);
                         delete csPairs[i];

@@ -8,6 +8,7 @@ Options::Options(){
     bedFile = "";
     umiPrefix = "";
     maxContig = 0;
+    threads = 2;
     bamHeader = NULL;
     properReadsUmiDiffThreshold = 1;
     unproperReadsUmiDiffThreshold = 0;
@@ -40,6 +41,10 @@ Options::Options(){
 }
 
 bool Options::validate() {
+    if(threads < 1) {
+        error_exit("threads must be at least 1");
+    }
+
     if(input.empty()) {
         error_exit("input should be specified by --in1");
     } else {

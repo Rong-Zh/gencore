@@ -28,10 +28,11 @@ int main(int argc, char* argv[]){
 
     cmdline::parser cmd;
     // input/output
-    cmd.add<string>("in", 'i', "input sorted bam/sam file. STDIN will be read from if it's not specified", false, "-");
-    cmd.add<string>("out", 'o', "output bam/sam file. STDOUT will be written to if it's not specified", false, "-");
+    cmd.add<string>("in", 'i', "input coordinate-sorted bam/sam file. STDIN will be read from if it's not specified", false, "-");
+    cmd.add<string>("out", 'o', "output coordinate-sorted bam/sam file. STDOUT will be written to if it's not specified", false, "-");
     cmd.add<string>("ref", 'r', "reference fasta file name (should be an uncompressed .fa/.fasta file)", true, "");
     cmd.add<string>("bed", 'b', "bed file to specify the capturing region, none by default", false, "");
+    cmd.add<int>("threads", '@', "number of shared HTSlib BAM compression/decompression worker threads. Default 2.", false, 2);
     cmd.add("duplex_only", 'x', "only output duplex consensus sequences, which means single stranded consensus sequences will be discarded.");
     cmd.add("no_duplex", 0, "don't merge single stranded consensus sequences to duplex consensus sequences.");
     
@@ -64,6 +65,7 @@ int main(int argc, char* argv[]){
     opt.output = cmd.get<string>("out");
     opt.refFile = cmd.get<string>("ref");
     opt.bedFile = cmd.get<string>("bed");
+    opt.threads = cmd.get<int>("threads");
     opt.umiPrefix = cmd.get<string>("umi_prefix");
     opt.clusterSizeReq = cmd.get<int>("supporting_reads");
     opt.baseScoreReq = cmd.get<int>("score_threshold");

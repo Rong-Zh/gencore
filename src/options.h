@@ -25,6 +25,7 @@ public:
     string umiPrefix;
     string reportTitle;
     int maxContig;
+    int threads;
     bam_hdr_t* bamHeader;
     bool debug;
     bool hasBedFile;

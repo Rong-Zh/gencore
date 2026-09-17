@@ -139,15 +139,14 @@ void HtmlReporter::printSummary(ofstream& ofs,  Stats* preStats, Stats* postStat
     }
 }
 
-long HtmlReporter::getYCeiling(vector<vector<long>> list, int denominator) {
+long HtmlReporter::getYCeiling(const vector<vector<long>>& list, int denominator) {
     int size = 0;
     for(int i=0; i<list.size(); i++) {
         if(mOptions->maxContig == 0 || i <= mOptions->maxContig)
             size += list[i].size();
     }
     size = 1 + size/denominator;
-    long* topvalues = new long[size];
-    memset(topvalues, 0, sizeof(long) * size);
+    vector<long> topvalues(size, 0);
     for(int x=0; x<list.size(); x++) {
         for(int y=0; y<list[x].size();y++) {
             long v = list[x][y];
@@ -238,7 +237,6 @@ void HtmlReporter::reportCoverage(ofstream& ofs, Stats* preStats, Stats* postSta
 
 void HtmlReporter::reportCoverageBed(ofstream& ofs, Stats* preStats, Stats* postStats) {
     vector<vector<BedRegion>>& preBed = preStats->mBedStats->mContigRegions;
-    vector<vector<BedRegion>>& postBed = postStats->mBedStats->mContigRegions;
 
     int maxpos = 0;
     for(int c=0; c<preBed.size();c++) {
@@ -259,12 +257,6 @@ void HtmlReporter::reportCoverageBed(ofstream& ofs, Stats* preStats, Stats* post
 
         double w = 5.0 + 95.0 * max(maxpos/100.0, (double)preBed[c].size()) / maxpos;
         string contig(mOptions->bamHeader->target_name[c]);
-
-        double* ybefore = new double[preStats->mGenomeDepth[c].size()];
-        double* yafter = new double[preStats->mGenomeDepth[c].size()];
-        double* x = new double[preStats->mGenomeDepth[c].size()];
-
-        int total = preBed[c].size();
 
         ofs << "<div class='bed_coverage_div' id='bed_coverage_" + contig +"'>\n";
         ofs << "<div class='coverage_figure' id='bed_plot_coverage_" + contig + "' style='width:" + to_string(w) + "%;height:250px;'></div>\n";

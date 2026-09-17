@@ -21,7 +21,7 @@ Basically, `gencore` groups the reads derived from the same original DNA templat
 
 This tool can eliminate the errors introduced by library preparation and sequencing processes, and consenquently reduce the false positives for downstream variant calling. This tool can also be used to remove duplicated reads. Since it generates consensus reads from duplicated reads, it outputs much cleaner data than conventional duplication remover. ***Due to these advantages, it is especially useful for processing ultra-deep sequencing data for cancer samples.***
 
-`gencore` accepts a sorted BAM/SAM with its corresponding reference fasta as input, and outputs an unsorted BAM/SAM.
+`gencore` accepts a coordinate-sorted BAM/SAM with its corresponding reference fasta as input, and outputs a coordinate-sorted BAM/SAM.
 
 # take a quick glance of the informative report
 * Sample HTML report: http://opengene.org/gencore/gencore.html
@@ -40,7 +40,7 @@ gencore -i input.sorted.bam -o output.bam -r Homo_sapiens_assembly19.fasta -b te
 # quick examples
 The simplest way
 ```shell
-gencore -i input.sorted.bam -o output.bam -r hg19.fasta
+gencore -i input.sorted.bam -o output.bam -r hg19.fasta -@ 2
 ```
 With a BED file to specify the capturing regions
 ```shell
@@ -67,15 +67,17 @@ chmod a+x ./gencore
 ```
 ## or compile from source
 ```shell
-# step 1: download and compile htslib from: https://github.com/samtools/htslib
-# step 2: get gencore source (you can also use browser to download from master or releases)
+# htslib 1.24 is provided under deps/htslib.
+# Get gencore source (you can also use browser to download from master or releases).
 git clone https://github.com/OpenGene/gencore.git
 
-# step 3: build
+# Build against the bundled htslib headers and static library. A C++20
+# compiler is required (GCC 10+, Clang 10+, or a compatible compiler).
 cd gencore
 make
+# The executable is written to bin/gencore.
 
-# step 4: install
+# Install.
 sudo make install
 ```
 
@@ -195,10 +197,11 @@ The UMI should in the tail of query names. It can have a prefix like `UMI`, foll
 # all options
 ```
 options:
-  -i, --in                       input sorted bam/sam file. STDIN will be read from if it's not specified (string [=-])
-  -o, --out                      output bam/sam file. STDOUT will be written to if it's not specified (string [=-])
+  -i, --in                       input coordinate-sorted bam/sam file. STDIN will be read from if it's not specified (string [=-])
+  -o, --out                      output coordinate-sorted bam/sam file. STDOUT will be written to if it's not specified (string [=-])
   -r, --ref                      reference fasta file name (should be an uncompressed .fa/.fasta file) (string)
   -b, --bed                      bed file to specify the capturing region, none by default (string [=])
+  -@, --threads                  number of shared HTSlib BAM compression/decompression worker threads. Default 2. (int [=2])
   -x, --duplex_only              only output duplex consensus sequences, which means single stranded consensus sequences will be discarded.
       --no_duplex                don't merge single stranded consensus sequences to duplex consensus sequences.
   -u, --umi_prefix               the prefix for UMI, if it has. None by default. Check the README for the defails of UMI formats. (string [=auto])
