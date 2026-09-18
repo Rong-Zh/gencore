@@ -72,11 +72,16 @@ chmod a+x ./gencore
 # Get gencore source (you can also use browser to download from master or releases).
 git clone https://github.com/OpenGene/gencore.git
 
-# Build against the bundled htslib headers and static library. A C++20
+# Build a fully static Linux executable against the bundled htslib. A C++20
 # compiler is required (GCC 10+, Clang 10+, or a compatible compiler).
 cd gencore
 make
+# Default is release: -O3, -DNDEBUG, fully static, stripped symbols.
 # The executable is written to bin/gencore.
+
+# Explicit equivalent of the default build (with two build jobs).
+make -j2 release
+# Also writes bin/gencore; uses separate objects under obj/release.
 
 # Optional: run the GoogleTest regression suite (requires GoogleTest).
 make test
@@ -84,6 +89,18 @@ make test
 # Install.
 sudo make install
 ```
+
+The application links with `-static`, including HTSlib, libdeflate, liblzma,
+libbz2, zlib and the C/C++ runtimes. Static archives for these dependencies must
+be installed in the build environment; missing archives cause a link failure
+rather than a fallback to shared libraries. On Debian/Ubuntu these are normally
+provided by `build-essential libdeflate-dev liblzma-dev libbz2-dev zlib1g-dev`.
+GoogleTest binaries retain separate link settings to support sanitizers.
+
+Verify the application with `file bin/gencore`, `readelf -l bin/gencore` and
+`readelf -d bin/gencore`: it should be statically linked, have no `INTERP`
+segment and no `NEEDED` shared-library entries. This is a Linux binary for the
+build architecture; reference FASTA and input data are still external files.
 
 # why to use gencore?
 As described above, gencore can eliminate the errors introduced by library preparation and sequencing processes, and consenquently it can greatly reduce the false positives for downstream variant calling. Let me show your an example.
