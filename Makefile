@@ -16,16 +16,20 @@ TEST_DEP = $(TEST_OBJ:.o=.d)
 TEST_LINK_OBJ = $(filter-out ${DIR_OBJ}/main.o,$(OBJ))
 RELEASE_OBJ = $(patsubst %.cpp,${DIR_OBJ}/release/%.o,$(notdir ${SRC}))
 RELEASE_DEP = $(RELEASE_OBJ:.o=.d)
+DEBUG_OBJ = $(patsubst %.cpp,${DIR_OBJ}/debug/%.o,$(notdir ${SRC}))
+DEBUG_DEP = $(DEBUG_OBJ:.o=.d)
 
 TARGET = gencore
 
 BIN_TARGET = ${DIR_BIN}/${TARGET}
 TEST_TARGET = ${DIR_BIN}/${TARGET}_tests
+DEBUG_TARGET = ${DIR_BIN}/debug/${TARGET}
 
 CXX = g++
 CPPFLAGS = -I${DIR_SRC} -I${HTSLIB_DIR}/include
 CXXFLAGS = -std=c++20 -O3 -g -MMD -MP
 RELEASE_CXXFLAGS = -std=c++20 -O3 -DNDEBUG -MMD -MP
+DEBUG_CXXFLAGS = -std=c++20 -O0 -g3 -UNDEBUG -fno-omit-frame-pointer -MMD -MP
 HTSLIB_LIB = ${HTSLIB_DIR}/lib/libhts.a
 LDLIBS = ${HTSLIB_LIB} -ldeflate -llzma -lbz2 -lz -lm -lpthread
 
@@ -48,18 +52,29 @@ ${DIR_OBJ}/release/%.o:${DIR_SRC}/%.cpp Makefile | make_release_obj_dir
 release: $(RELEASE_OBJ) $(HTSLIB_LIB) | make_bin_dir
 	$(CXX) $(LDFLAGS) -static -s $(RELEASE_OBJ) $(LDLIBS) -o $(BIN_TARGET)
 
+${DIR_OBJ}/debug/%.o:${DIR_SRC}/%.cpp Makefile | make_debug_dirs
+	$(CXX) $(CPPFLAGS) $(DEBUG_CXXFLAGS) -c $< -o $@
+
+debug: $(DEBUG_TARGET)
+
+$(DEBUG_TARGET): $(DEBUG_OBJ) $(HTSLIB_LIB) Makefile | make_debug_dirs
+	$(CXX) $(LDFLAGS) -static $(DEBUG_OBJ) $(LDLIBS) -o $@
+
 ${TEST_TARGET}:${TEST_LINK_OBJ} ${TEST_OBJ} | make_bin_dir
 	$(CXX) $(LDFLAGS) $^ -lgtest_main -lgtest $(LDLIBS) -o $@
 
-.PHONY: clean make_obj_dir make_release_obj_dir make_bin_dir install test release
+.PHONY: clean make_obj_dir make_release_obj_dir make_debug_dirs make_bin_dir install test release debug
 clean:
-	rm -f $(OBJ) $(DEP) $(TEST_OBJ) $(TEST_DEP) $(RELEASE_OBJ) $(RELEASE_DEP) $(BIN_TARGET) $(TEST_TARGET) $(TARGET)
+	rm -f $(OBJ) $(DEP) $(TEST_OBJ) $(TEST_DEP) $(RELEASE_OBJ) $(RELEASE_DEP) $(DEBUG_OBJ) $(DEBUG_DEP) $(BIN_TARGET) $(TEST_TARGET) $(DEBUG_TARGET) $(TARGET)
 
 make_obj_dir:
 	mkdir -p $(DIR_OBJ)
 
 make_release_obj_dir:
 	mkdir -p $(DIR_OBJ)/release
+
+make_debug_dirs:
+	mkdir -p $(DIR_OBJ)/debug $(DIR_BIN)/debug
 
 make_bin_dir:
 	mkdir -p $(DIR_BIN)
@@ -72,4 +87,4 @@ test: $(TEST_TARGET) $(BIN_TARGET)
 	$(TEST_TARGET)
 	python3 $(DIR_TEST)/test_umi_pipeline.py
 
--include $(DEP) $(TEST_DEP) $(RELEASE_DEP)
+-include $(DEP) $(TEST_DEP) $(RELEASE_DEP) $(DEBUG_DEP)

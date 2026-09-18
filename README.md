@@ -83,6 +83,12 @@ make
 make -j2 release
 # Also writes bin/gencore; uses separate objects under obj/release.
 
+# Debug build: -O0, -g3, assertions enabled, fully static, symbols retained.
+make -j2 debug
+# Writes bin/debug/gencore, with separate objects under obj/debug.
+# Does not overwrite the default release binary bin/gencore.
+# Example: gdb --args bin/debug/gencore -i input.bam -o output.bam -r ref.fa
+
 # Optional: run the GoogleTest regression suite (requires GoogleTest).
 make test
 
@@ -96,6 +102,12 @@ be installed in the build environment; missing archives cause a link failure
 rather than a fallback to shared libraries. On Debian/Ubuntu these are normally
 provided by `build-essential libdeflate-dev liblzma-dev libbz2-dev zlib1g-dev`.
 GoogleTest binaries retain separate link settings to support sanitizers.
+
+`make` continues to default to release. `make debug` disables optimization for
+gencore sources and retains frame pointers for debugging. Bundled third-party
+archives are reused as built; their optimization and debug-symbol availability
+are not changed by this target. `make clean` removes both release and debug
+build outputs.
 
 Verify the application with `file bin/gencore`, `readelf -l bin/gencore` and
 `readelf -d bin/gencore`: it should be statically linked, have no `INTERP`
