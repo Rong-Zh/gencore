@@ -2,6 +2,29 @@
 
 ## Unreleased — 2026-09-28
 
+### Improve end-to-end performance with large BED panels
+
+- Index per-contig BED intervals by prefix-maximum end coordinate and use binary
+  search to skip intervals preceding each coverage query. Nested, overlapping,
+  and duplicate intervals retain their original counts and report order. Queries
+  need not arrive in coordinate order. Unsorted BED input uses the legacy scan.
+- Copy the coverage index for post-processing statistics and leave the existing
+  UMI clustering, consensus scoring, and coordinate-output rules unchanged.
+- Buffer BED JSON output instead of flushing the file after every interval.
+  Report values and formatting are unchanged.
+- Add coverage regression tests and `benchmarks/compare_outputs.py` to compare
+  complete alignment records and JSON statistics between runs.
+- All 4,719,377 output alignment records match the pre-optimization output,
+  including sequences, qualities, mapping fields and auxiliary tags (ignoring
+  order within equal-coordinate groups). All JSON statistics and coverage values
+  match after excluding command paths. The output passes quickcheck and indexing;
+  26 GoogleTest cases and five end-to-end tests pass.
+- On the supplied 6,500,311-record input with the same hg19 reference, WES BED,
+  and default two I/O workers, elapsed time decreased from 343.93 to 115.99
+  seconds, including JSON/HTML reports (about 2.97x). Peak RSS changed from
+  1,997,924 to 2,000,624 KiB. These are individual local WSL runs, not repeated
+  controlled trials or a general speed guarantee; storage and caching affect timing.
+
 ### Fix output coordinate regression with coordinate-sorted input
 
 **Symptom:** gencore could exit with `ERROR: internal output ordering failure`

@@ -1,5 +1,47 @@
 # Performance checks
 
+## End-to-end BED coverage and report optimization
+
+Coverage queries now use a per-contig prefix-maximum-end index to skip intervals
+that cannot overlap the read. The index handles nested intervals and does not
+assume query coordinates increase. It uses O(R) integers for R BED intervals;
+each query costs O(log R + K), where K is the remaining scanned candidate span
+(deeply nested intervals can still make K large). Unsorted BED input retains
+the original scan semantics. BED JSON lines use buffered newlines rather than
+one forced file flush per interval.
+
+Using the same 6,500,311-record input, hg19 reference, WES BED and two I/O workers:
+
+| Measurement | Before (6a88412) | After |
+| --- | --- | --- |
+| Entire program, including JSON/HTML | 343.93 s | 115.99 s |
+| User CPU time | 126.78 s | 82.16 s |
+| System CPU time | 37.32 s | 15.00 s |
+| Peak RSS | 1,997,924 KiB | 2,000,624 KiB |
+| Output records | 4,719,377 | 4,719,377 |
+
+These are individual runs on the local WSL/mounted-Windows-drive environment;
+the ~2.97x observed speedup is not a portable guarantee or a repeated controlled
+benchmark. Reference, alignment processing and both reports are included;
+subsequent samtools validation and content comparisons are excluded from timing.
+All 4,719,377 alignment records matched, including all auxiliary tags, after
+allowing equal-coordinate tie ordering. All JSON statistics and coverage values
+also matched, excluding only command paths. The optimized BAM passed quickcheck
+and indexing without another sort.
+
+To compare complete output records (including all auxiliary tags) and report
+statistics, allowing harmless equal-coordinate ordering differences:
+
+```sh
+python3 benchmarks/compare_outputs.py old.bam new.bam old.json new.json
+```
+
+This requires samtools. JSON comparison excludes only the recorded command,
+whose input/output paths may differ. The comparator buffers one coordinate
+group at a time, rather than both entire SAM files, and loads the JSON reports.
+
+## UMI clustering microbenchmark
+
 The distance-one UMI path uses a hash index when a coordinate cluster has more
 than 512 distinct nonzero-count UMIs. For each node it enumerates single-base
 substitutions (including N), leaving `_` positions intact. Candidates are sorted

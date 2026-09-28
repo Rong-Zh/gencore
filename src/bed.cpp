@@ -2,6 +2,8 @@
 #include "util.h"
 #include <sstream>
 #include <string.h>
+#include <algorithm>
+#include <limits>
 
 Bed::Bed(Options* opt) {
 	mOptions = opt;
@@ -67,7 +69,12 @@ void Bed::statDepth(int tid, int start, int len) {
 
 	int end = start + len;
 
-	for(int p=0; p<mContigRegions[tid].size(); p++) {
+    size_t first = 0;
+    if(tid < mPrefixMaxEnd.size() && !mPrefixMaxEnd[tid].empty()) {
+        const auto& ends = mPrefixMaxEnd[tid];
+        first = lower_bound(ends.begin(), ends.end(), start) - ends.begin();
+    }
+	for(size_t p=first; p<mContigRegions[tid].size(); p++) {
 		if(mContigRegions[tid][p].mEnd < start)
 			continue;
 		if(mContigRegions[tid][p].mStart > end)
@@ -79,22 +86,22 @@ void Bed::statDepth(int tid, int start, int len) {
 }
 
 void Bed::reportJSON(ofstream& ofs) {
-	ofs << "\t\t\"coverage_bed\":{" << endl;
+	ofs << "\t\t\"coverage_bed\":{" << '\n';
 	for(int c=0; c<mContigRegions.size();c++) {
 		string contig(mOptions->bamHeader->target_name[c]);
-		ofs << "\t\t\t\"" << contig << "\":[" << endl;
+		ofs << "\t\t\t\"" << contig << "\":[" << '\n';
 		for(int p=0; p<mContigRegions[c].size(); p++) {
 			ofs << "\t\t\t\t[\"" << mContigRegions[c][p].mName << "\"," << mContigRegions[c][p].mStart << "," << mContigRegions[c][p].mEnd << "," << mContigRegions[c][p].getAvgDepth() << "]";
 			if(p != mContigRegions[c].size()-1)
 				ofs << ",";
-			ofs << endl;
+			ofs << '\n';
 		}
 	    ofs << "\t\t\t]";
         if(c!=mContigRegions.size() - 1)
 			ofs << ",";
-        ofs << endl;
+        ofs << '\n';
 	}
-	ofs << "\t\t}" << endl;
+	ofs << "\t\t}" << '\n';
 }
 
 void Bed::copyFrom(Bed* other) {
@@ -105,6 +112,26 @@ void Bed::copyFrom(Bed* other) {
 			mContigRegions[c].push_back(other->mContigRegions[c][p]);
 		}
 	}
+    mPrefixMaxEnd = other->mPrefixMaxEnd;
+}
+
+void Bed::buildCoverageIndex() {
+    mPrefixMaxEnd.clear();
+    mPrefixMaxEnd.resize(mContigRegions.size());
+    for(size_t tid = 0; tid < mContigRegions.size(); ++tid) {
+        const auto& regions = mContigRegions[tid];
+        if(!is_sorted(regions.begin(), regions.end(), [](const BedRegion& a, const BedRegion& b) {
+            return a.mStart < b.mStart;
+        }))
+            continue; // Preserve legacy behavior for unsorted BED input.
+        auto& ends = mPrefixMaxEnd[tid];
+        ends.reserve(regions.size());
+        int maximum = numeric_limits<int>::min();
+        for(const auto& region : regions) {
+            maximum = max(maximum, region.mEnd);
+            ends.push_back(maximum);
+        }
+    }
 }
 
 void Bed::loadFromFile() {
@@ -166,4 +193,5 @@ void Bed::loadFromFile() {
         	mContigRegions[tid].push_back(BedRegion(chr, start, end, name));
     }
     mOptions->hasBedFile = true;
+    buildCoverageIndex();
 }

@@ -59,6 +59,12 @@ public:
 public:
     Options* mOptions;
     vector<vector<BedRegion>> mContigRegions;
+
+private:
+    void buildCoverageIndex();
+    // Monotone prefix maxima support nested/overlapping intervals without
+    // assuming their ends are sorted. Empty entries use the original scan.
+    vector<vector<int>> mPrefixMaxEnd;
 };
 
 
