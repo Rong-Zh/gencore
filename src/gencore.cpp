@@ -339,23 +339,30 @@ void Gencore::consensus(){
 }
 
 void Gencore::addToProperCluster(bam1_t* b) {
-    int tid = b->core.tid;
-    int left = b->core.pos;
+    const int tid = b->core.tid;
+    const hts_pos_t inputPos = b->core.pos;
+    int left = inputPos;
     long right;
 
+    // No usable mate coordinate: retain the record without creating a
+    // negative-coordinate cluster that cannot safely pair it.
+    if(b->core.mtid < 0 || b->core.mpos < 0) {
+        bufferOutput(b);
+        return;
+    }
+
     if(b->core.mtid == b->core.tid && abs(b->core.mpos - b->core.pos) < 100000) { // process pair synchronously when they are on same contig without huge gap
-        if(b->core.isize < 0) {
-            left = b->core.mpos;
-        }
+        // TLEN sign is not a reliable ordering of aligned starts (overlapping
+        // mates with clipping/indels can have a negative TLEN on the left).
+        // The cluster key must be <= every contained alignment's start for
+        // flushReadyOutput's exclusive watermark to remain valid.
+        left = min(inputPos, b->core.mpos);
         right = left + abs(b->core.isize) -  1;
+        // A zero/short TLEN must never permit finalizing before the later mate.
+        // Keep equal-coordinate records active until input has passed them.
+        right = max<hts_pos_t>(right, max(inputPos, b->core.mpos));
     } else { // cross contig, we only process this read, but dont process its mate
-        // no mate or mate is not mapped, we cannot remove duplication or make consensus read, so just write it
-        if(b->core.mtid < 0) {
-            bufferOutput(b);
-            return;
-        } else { // cross contig pair mapping
-            right = -1L * (long)mBamHeader->target_len[b->core.tid] * (long)(b->core.mtid+1) + (long)b->core.mpos;
-        }
+        right = -1L * (long)mBamHeader->target_len[b->core.tid] * (long)(b->core.mtid+1) + (long)b->core.mpos;
     }
 
     createCluster(mProperClusters, tid, left, right);
@@ -376,13 +383,13 @@ void Gencore::addToProperCluster(bam1_t* b) {
             break;
         }
         for(iter2 = iter1->second.begin(); iter2 != iter1->second.end(); ) {
-            if(iter1->first == tid && iter2->first >= b->core.pos) {
+            if(iter1->first == tid && iter2->first >= inputPos) {
                 needBreak = true;
                 break;
             }
             for(iter3 = iter2->second.begin(); iter3 != iter2->second.end(); ) {
                 // only deal with the clusters with right < processing pos
-                if(iter1->first == tid && iter3->first >= b->core.pos) {
+                if(iter1->first == tid && iter3->first >= inputPos) {
                     break;
                 }
                 vector<Pair*> csPairs = iter3->second->clusterByUMI(mOptions->properReadsUmiDiffThreshold, mPreStats, mPostStats, iter3->first < 0);

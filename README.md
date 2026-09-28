@@ -11,6 +11,7 @@ An efficient tool to remove sequencing duplications and eliminate sequencing err
 * [UMI format](#umi-format)
 * [UMI clustering](#umi-clustering)
 * [All options](#all-options)
+* [Changelog](CHANGELOG.md)
 * [Read/cite gencore paper](#citation)
 
 # what's gencore?
@@ -292,9 +293,14 @@ is no new allele-conflict splitting step. Low-frequency variant applications
 should validate false merges and variant retention using controls, including a
 comparison with `-d 0`; no universal optimality or clinical validation is claimed.
 
-This changes UMI grouping only, not the upstream coordinate definition: ordinary
-same-contig pairs use chromosome, aligned left position and the endpoint derived
-from absolute TLEN. Cross-contig/large-gap pairs use the existing mate-coordinate
+Ordinary same-contig pairs use chromosome, `min(POS, PNEXT)` and the endpoint
+derived from absolute TLEN, clamped to at least `max(POS, PNEXT)`. The left boundary
+does not depend on TLEN sign: overlapping/clipped alignments can have negative
+TLEN on the leftmost read. The clamp prevents premature finalization for zero or
+short TLEN. Clusters are finalized only after input has passed their boundary;
+output is written strictly before both the current input coordinate and the
+earliest active cluster's left coordinate. Records with no usable mate coordinate
+are buffered directly. Cross-contig/large-gap pairs use the existing mate-coordinate
 encoding. This is not a new unclipped-5'-coordinate, read-group, or explicit strand
 partitioning implementation, and is not a byte-for-byte UMI-tools replacement.
 The same configured UMI threshold now applies to streaming flushes and end-of-file
@@ -312,6 +318,8 @@ make test
 GoogleTest and Python 3 are required for `make test`. Tests cover the directional
 boundaries, singleton ties, chains, shared descendants, exact matching, UMI
 structure, consensus mate identity, and streaming/end-of-file consistency.
+Regression cases also cover negative TLEN on the leftmost read and zero/short
+TLEN with a later mate, checking that streaming and end-of-file results agree.
 
 # all options
 ```
